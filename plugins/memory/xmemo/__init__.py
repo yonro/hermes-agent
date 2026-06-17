@@ -117,7 +117,177 @@ UPDATE_STATE_SCHEMA = {
     },
 }
 
-ALL_TOOL_SCHEMAS = [SEARCH_SCHEMA, REMEMBER_SCHEMA, UPDATE_STATE_SCHEMA]
+RECALL_CONTEXT_SCHEMA = {
+    "name": "xmemo_recall_context",
+    "description": (
+        "Build a bounded, ranked context pack from XMemo memories. "
+        "Use when you need a focused memory summary rather than raw search results."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What to recall context for.",
+            },
+            "max_items": {
+                "type": "integer",
+                "description": "Max memory items to include (default 5, max 20).",
+            },
+            "memory_type": {
+                "type": "string",
+                "description": "Optional memory type filter (semantic, episodic, working, identity, procedural).",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+RECORD_EVENT_SCHEMA = {
+    "name": "xmemo_record_event",
+    "description": (
+        "Record a significant session event, milestone, decision, or handoff note "
+        "to the XMemo timeline. Use for durable audit-style notes, not transient chat."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The event note to save.",
+            },
+            "event_type": {
+                "type": "string",
+                "description": "Event type: event, milestone, decision, handoff (default event).",
+            },
+        },
+        "required": ["content"],
+    },
+}
+
+CREATE_REMINDER_SCHEMA = {
+    "name": "xmemo_create_reminder",
+    "description": (
+        "Create a TODO or action item in XMemo to revisit later. "
+        "Use when the user asks you to follow up, save a task, or remind them."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "What to remember to do.",
+            },
+            "due_at": {
+                "type": "string",
+                "description": "Optional due time as ISO 8601 string.",
+            },
+        },
+        "required": ["content"],
+    },
+}
+
+LIST_REMINDERS_SCHEMA = {
+    "name": "xmemo_list_reminders",
+    "description": (
+        "List XMemo TODO/action items. Use when the user asks what tasks, follow-ups, "
+        "or reminders are pending or done."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "item_status": {
+                "type": "string",
+                "description": "Filter by status: open or completed (default open).",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (default 20).",
+            },
+        },
+        "required": [],
+    },
+}
+
+COMPLETE_REMINDER_SCHEMA = {
+    "name": "xmemo_complete_reminder",
+    "description": (
+        "Mark a XMemo TODO/action item as completed. "
+        "Use when the user says a saved task is done, resolved, or no longer needed."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "todo_id": {
+                "type": "string",
+                "description": "The exact TODO item ID from xmemo_list_reminders.",
+            },
+            "note": {
+                "type": "string",
+                "description": "Optional completion note.",
+            },
+        },
+        "required": ["todo_id"],
+    },
+}
+
+MARK_USED_SCHEMA = {
+    "name": "xmemo_mark_used",
+    "description": (
+        "Tell XMemo that a recalled memory influenced the current answer. "
+        "Call this after using a specific memory returned by xmemo_search or "
+        "xmemo_recall_context."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "memory_id": {
+                "type": "string",
+                "description": "Exact memory ID returned by xmemo_search.",
+            },
+            "context": {
+                "type": "string",
+                "description": "Optional short note on how the memory was used.",
+            },
+        },
+        "required": ["memory_id"],
+    },
+}
+
+FORGET_SCHEMA = {
+    "name": "xmemo_forget",
+    "description": (
+        "Delete a memory from XMemo. Use when the user explicitly asks to forget "
+        "or remove a specific saved fact. target can be 'current' or an exact memory ID."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "target": {
+                "type": "string",
+                "description": "'current' or exact memory ID from xmemo_search.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional reason for deletion.",
+            },
+        },
+        "required": ["target"],
+    },
+}
+
+ALL_TOOL_SCHEMAS = [
+    SEARCH_SCHEMA,
+    REMEMBER_SCHEMA,
+    UPDATE_STATE_SCHEMA,
+    RECALL_CONTEXT_SCHEMA,
+    RECORD_EVENT_SCHEMA,
+    CREATE_REMINDER_SCHEMA,
+    LIST_REMINDERS_SCHEMA,
+    COMPLETE_REMINDER_SCHEMA,
+    MARK_USED_SCHEMA,
+    FORGET_SCHEMA,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +432,11 @@ class XMemoMemoryProvider(MemoryProvider):
         """Write non-secret config to $HERMES_HOME/xmemo.json."""
         from plugins.memory.xmemo.config import save_config as _save_config
         _save_config(values, hermes_home=hermes_home)
+
+    def post_setup(self, hermes_home: str, config: Dict[str, Any]) -> None:
+        """Run the full XMemo setup wizard after provider selection."""
+        from plugins.memory.xmemo.cli import cmd_setup
+        cmd_setup(provider=self, hermes_home=hermes_home, config=config)
 
     def _is_breaker_open(self) -> bool:
         if self._consecutive_failures < _BREAKER_THRESHOLD:
@@ -463,6 +638,20 @@ class XMemoMemoryProvider(MemoryProvider):
             return self._handle_remember(client, args)
         if tool_name == "xmemo_update_state":
             return self._handle_update_state(client, args)
+        if tool_name == "xmemo_recall_context":
+            return self._handle_recall_context(client, args)
+        if tool_name == "xmemo_record_event":
+            return self._handle_record_event(client, args)
+        if tool_name == "xmemo_create_reminder":
+            return self._handle_create_reminder(client, args)
+        if tool_name == "xmemo_list_reminders":
+            return self._handle_list_reminders(client, args)
+        if tool_name == "xmemo_complete_reminder":
+            return self._handle_complete_reminder(client, args)
+        if tool_name == "xmemo_mark_used":
+            return self._handle_mark_used(client, args)
+        if tool_name == "xmemo_forget":
+            return self._handle_forget(client, args)
 
         return tool_error(f"Unknown XMemo tool: {tool_name}")
 
@@ -556,6 +745,175 @@ class XMemoMemoryProvider(MemoryProvider):
         except Exception as exc:
             self._record_failure()
             return tool_error(f"XMemo update_state failed: {exc}")
+
+    def _handle_recall_context(self, client, args: Dict[str, Any]) -> str:
+        query = args.get("query", "").strip()
+        if not query:
+            return tool_error("Missing required parameter: query")
+
+        max_items = min(int(args.get("max_items", 5)), 20)
+        memory_type = args.get("memory_type", "auto")
+
+        try:
+            context = client.recall_context(
+                query=query,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+                max_items=max_items,
+                max_tokens=int(self._config.get("prefetch_max_tokens", 900)),
+                memory_type=memory_type,
+                prefer_working=True,
+            )
+            self._record_success()
+            text = _format_recall_context(context)
+            if not text:
+                return json.dumps({"result": "No relevant XMemo context found."})
+            return json.dumps({
+                "context": text,
+                "items": context.get("items", []) if isinstance(context, dict) else [],
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo recall_context failed: {exc}")
+
+    def _handle_record_event(self, client, args: Dict[str, Any]) -> str:
+        content = args.get("content", "").strip()
+        if not content:
+            return tool_error("Missing required parameter: content")
+
+        event_type = args.get("event_type", "event").strip() or "event"
+
+        try:
+            result = client.record_event(
+                content=content,
+                event_type=event_type,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+                session_id=self._session_id,
+            )
+            self._record_success()
+            return json.dumps({
+                "result": "Event recorded in XMemo timeline.",
+                "event_id": result.get("id") if isinstance(result, dict) else None,
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo record_event failed: {exc}")
+
+    def _handle_create_reminder(self, client, args: Dict[str, Any]) -> str:
+        content = args.get("content", "").strip()
+        if not content:
+            return tool_error("Missing required parameter: content")
+
+        due_at = args.get("due_at", "").strip()
+
+        try:
+            result = client.create_reminder(
+                content=content,
+                due_at=due_at,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+                session_id=self._session_id,
+            )
+            self._record_success()
+            return json.dumps({
+                "result": "Reminder saved to XMemo.",
+                "todo_id": result.get("id") if isinstance(result, dict) else None,
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo create_reminder failed: {exc}")
+
+    def _handle_list_reminders(self, client, args: Dict[str, Any]) -> str:
+        item_status = args.get("item_status", "open") or "open"
+        limit = min(int(args.get("limit", 20)), 100)
+
+        try:
+            items = client.list_reminders(
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+                item_status=item_status,
+                limit=limit,
+            )
+            self._record_success()
+            if not items:
+                return json.dumps({"result": f"No {item_status} XMemo reminders found."})
+            return json.dumps({
+                "items": items,
+                "count": len(items),
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo list_reminders failed: {exc}")
+
+    def _handle_complete_reminder(self, client, args: Dict[str, Any]) -> str:
+        todo_id = args.get("todo_id", "").strip()
+        if not todo_id:
+            return tool_error("Missing required parameter: todo_id")
+
+        note = args.get("note", "").strip()
+
+        try:
+            result = client.complete_reminder(
+                todo_id=todo_id,
+                note=note,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+            )
+            self._record_success()
+            return json.dumps({
+                "result": "Reminder marked completed.",
+                "todo_id": result.get("id") if isinstance(result, dict) else todo_id,
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo complete_reminder failed: {exc}")
+
+    def _handle_mark_used(self, client, args: Dict[str, Any]) -> str:
+        memory_id = args.get("memory_id", "").strip()
+        if not memory_id:
+            return tool_error("Missing required parameter: memory_id")
+
+        context = args.get("context", "").strip()
+
+        try:
+            result = client.mark_used(
+                memory_id=memory_id,
+                context=context,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+            )
+            self._record_success()
+            return json.dumps({
+                "result": "Memory usage recorded in XMemo.",
+                "memory_id": result.get("id") if isinstance(result, dict) else memory_id,
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo mark_used failed: {exc}")
+
+    def _handle_forget(self, client, args: Dict[str, Any]) -> str:
+        target = args.get("target", "").strip()
+        if not target:
+            return tool_error("Missing required parameter: target")
+
+        reason = args.get("reason", "").strip()
+
+        try:
+            result = client.forget(
+                target=target,
+                reason=reason,
+                bucket=self._config.get("bucket", "work"),
+                scope=self._config.get("scope", "hermes/default"),
+            )
+            self._record_success()
+            return json.dumps({
+                "result": "Memory deleted from XMemo.",
+                "memory_id": result.get("id") if isinstance(result, dict) else target,
+            })
+        except Exception as exc:
+            self._record_failure()
+            return tool_error(f"XMemo forget failed: {exc}")
 
     def shutdown(self) -> None:
         """Clean shutdown: flush threads and close client."""

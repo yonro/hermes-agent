@@ -249,6 +249,100 @@ class XMemoClient:
             payload["session_id"] = session_id
         return self._request("POST", "/v1/restart/snapshot", json_body=payload)
 
+    def create_reminder(
+        self,
+        content: str,
+        *,
+        bucket: str = "work",
+        scope: str = "hermes/default",
+        due_at: str = "",
+        session_id: str = "",
+    ) -> Dict[str, Any]:
+        """Create a TODO/action item to revisit later."""
+        payload: Dict[str, Any] = {
+            "content": content,
+            "bucket": bucket,
+            "scope": scope,
+        }
+        if due_at:
+            payload["due_at"] = due_at
+        if session_id:
+            payload["session_id"] = session_id
+        return self._request("POST", "/v1/reminders", json_body=payload)
+
+    def list_reminders(
+        self,
+        *,
+        bucket: str = "work",
+        scope: str = "hermes/default",
+        item_status: str = "open",
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """List open or completed TODO items."""
+        result = self._request(
+            "GET",
+            "/v1/reminders",
+            params={
+                "bucket": bucket,
+                "scope": scope,
+                "item_status": item_status,
+                "limit": limit,
+            },
+        )
+        if isinstance(result, dict):
+            return result.get("items", []) or result.get("reminders", []) or []
+        if isinstance(result, list):
+            return result
+        return []
+
+    def complete_reminder(
+        self,
+        todo_id: str,
+        *,
+        bucket: str = "work",
+        scope: str = "hermes/default",
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """Mark a TODO item as completed."""
+        payload: Dict[str, Any] = {"bucket": bucket, "scope": scope}
+        if note:
+            payload["note"] = note
+        return self._request(
+            "POST", f"/v1/reminders/{todo_id}/complete", json_body=payload
+        )
+
+    def mark_used(
+        self,
+        memory_id: str,
+        *,
+        context: str = "",
+        bucket: str = "work",
+        scope: str = "hermes/default",
+    ) -> Dict[str, Any]:
+        """Record that a recalled memory was used in the answer."""
+        payload: Dict[str, Any] = {"bucket": bucket, "scope": scope}
+        if context:
+            payload["context"] = context
+        return self._request(
+            "POST", f"/v1/memories/{memory_id}/used", json_body=payload
+        )
+
+    def forget(
+        self,
+        target: str,
+        *,
+        bucket: str = "work",
+        scope: str = "hermes/default",
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Delete a memory by id ('current' or exact id)."""
+        payload: Dict[str, Any] = {"bucket": bucket, "scope": scope}
+        if reason:
+            payload["reason"] = reason
+        return self._request(
+            "POST", f"/v1/forget/{target}", json_body=payload
+        )
+
     def close(self) -> None:
         """Close the underlying HTTP client."""
         try:

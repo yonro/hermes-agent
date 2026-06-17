@@ -54,6 +54,26 @@ class FakeXMemoClient:
         self._record("create_restart_snapshot", **kwargs)
         return {"id": "snapshot-123"}
 
+    def create_reminder(self, **kwargs):
+        self._record("create_reminder", **kwargs)
+        return {"id": "reminder-123"}
+
+    def list_reminders(self, **kwargs):
+        self._record("list_reminders", **kwargs)
+        return self.search_results
+
+    def complete_reminder(self, **kwargs):
+        self._record("complete_reminder", **kwargs)
+        return {"id": kwargs.get("todo_id", "reminder-123")}
+
+    def mark_used(self, **kwargs):
+        self._record("mark_used", **kwargs)
+        return {"id": kwargs.get("memory_id", "mem-123")}
+
+    def forget(self, **kwargs):
+        self._record("forget", **kwargs)
+        return {"id": kwargs.get("target", "mem-123")}
+
     def close(self):
         self._record("close")
 
@@ -203,6 +223,164 @@ class TestTools:
         )
         assert "error" in result
 
+    def test_recall_context_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient(
+            recall_context={
+                "context_text": "User prefers concise answers.",
+                "items": [{"content": "User prefers concise answers."}],
+            }
+        )
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_recall_context", {"query": "style preferences"}
+            )
+        )
+
+        assert "concise answers" in result["context"]
+        assert fake.captured_calls[0]["method"] == "recall_context"
+        assert fake.captured_calls[0]["query"] == "style preferences"
+
+    def test_recall_context_tool_missing_query(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call("xmemo_recall_context", {})
+        )
+        assert "error" in result
+
+    def test_record_event_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_record_event",
+                {"content": "Migrated to new memory backend", "event_type": "milestone"},
+            )
+        )
+
+        assert result["result"] == "Event recorded in XMemo timeline."
+        assert result["event_id"] == "event-123"
+        assert fake.captured_calls[0]["method"] == "record_event"
+        assert fake.captured_calls[0]["event_type"] == "milestone"
+
+    def test_create_reminder_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_create_reminder",
+                {"content": "Write migration docs", "due_at": "2026-06-20T10:00:00Z"},
+            )
+        )
+
+        assert result["result"] == "Reminder saved to XMemo."
+        assert result["todo_id"] == "reminder-123"
+        assert fake.captured_calls[0]["method"] == "create_reminder"
+        assert fake.captured_calls[0]["due_at"] == "2026-06-20T10:00:00Z"
+
+    def test_list_reminders_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient(
+            search_results=[
+                {"content": "Write migration docs", "item_status": "open", "id": "reminder-123"},
+            ]
+        )
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_list_reminders", {"item_status": "open"}
+            )
+        )
+
+        assert result["count"] == 1
+        assert result["items"][0]["content"] == "Write migration docs"
+        assert fake.captured_calls[0]["method"] == "list_reminders"
+        assert fake.captured_calls[0]["item_status"] == "open"
+
+    def test_complete_reminder_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_complete_reminder",
+                {"todo_id": "reminder-123", "note": "Done in PR #42"},
+            )
+        )
+
+        assert result["result"] == "Reminder marked completed."
+        assert result["todo_id"] == "reminder-123"
+        assert fake.captured_calls[0]["method"] == "complete_reminder"
+        assert fake.captured_calls[0]["note"] == "Done in PR #42"
+
+    def test_complete_reminder_tool_missing_id(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call("xmemo_complete_reminder", {})
+        )
+        assert "error" in result
+
+    def test_mark_used_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_mark_used",
+                {"memory_id": "mem-456", "context": "Used to answer style question"},
+            )
+        )
+
+        assert result["result"] == "Memory usage recorded in XMemo."
+        assert result["memory_id"] == "mem-456"
+        assert fake.captured_calls[0]["method"] == "mark_used"
+        assert fake.captured_calls[0]["context"] == "Used to answer style question"
+
+    def test_forget_tool(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(
+            provider_with_config.handle_tool_call(
+                "xmemo_forget",
+                {"target": "mem-789", "reason": "Outdated preference"},
+            )
+        )
+
+        assert result["result"] == "Memory deleted from XMemo."
+        assert result["memory_id"] == "mem-789"
+        assert fake.captured_calls[0]["method"] == "forget"
+        assert fake.captured_calls[0]["reason"] == "Outdated preference"
+
+    def test_forget_tool_missing_target(self, provider_with_config, monkeypatch):
+        fake = FakeXMemoClient()
+        monkeypatch.setattr(provider_with_config, "_get_client", lambda: fake)
+
+        result = json.loads(provider_with_config.handle_tool_call("xmemo_forget", {}))
+        assert "error" in result
+
+    def test_tool_schemas_include_new_tools(self, provider_with_config):
+        names = {s["name"] for s in provider_with_config.get_tool_schemas()}
+        assert names == {
+            "xmemo_search",
+            "xmemo_remember",
+            "xmemo_update_state",
+            "xmemo_recall_context",
+            "xmemo_record_event",
+            "xmemo_create_reminder",
+            "xmemo_list_reminders",
+            "xmemo_complete_reminder",
+            "xmemo_mark_used",
+            "xmemo_forget",
+        }
+
 
 class TestPrefetch:
     """Background recall and prefetch behavior."""
@@ -299,6 +477,76 @@ class TestConfigSchema:
         data = json.loads(config_file.read_text())
         assert "api_key" not in data
         assert data["scope"] == "hermes/test"
+
+
+class TestSetupWizard:
+    """post_setup() and cli.py write config files correctly."""
+
+    def test_post_setup_writes_config_and_env(self, monkeypatch, tmp_path, capsys):
+        from hermes_cli.config import load_config, save_config as save_global_config
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        # Seed an empty global config in the temp home
+        save_global_config({"memory": {}})
+
+        # Mock curses select for bucket choice -> "work"
+        monkeypatch.setattr(
+            "plugins.memory.xmemo.cli._curses_select", lambda title, choices, default=0: default
+        )
+        # Mock secret prompt and regular stdin prompt
+        monkeypatch.setattr(
+            "plugins.memory.xmemo.cli.masked_secret_prompt", lambda prompt: "xmemo-token-123"
+        )
+        # Answers for: base_url, agent_id, scope, timeout (all keep defaults)
+        answers = iter(["", "", "", ""])
+        monkeypatch.setattr("sys.stdin.readline", lambda: next(answers) + "\n")
+
+        provider = XMemoMemoryProvider()
+        config = load_config()
+        provider.post_setup(str(tmp_path), config)
+
+        # Verify config.yaml activation
+        updated = load_config()
+        assert updated.get("memory", {}).get("provider") == "xmemo"
+
+        # Verify .env contains the secret
+        env_file = tmp_path / ".env"
+        assert env_file.exists()
+        env_text = env_file.read_text()
+        assert "XMEMO_KEY=xmemo-token-123" in env_text
+
+        # Verify xmemo.json does NOT contain the secret
+        xmemo_file = tmp_path / "xmemo.json"
+        assert xmemo_file.exists()
+        xmemo_data = json.loads(xmemo_file.read_text())
+        assert "api_key" not in xmemo_data
+        assert xmemo_data["bucket"] == "work"
+
+        captured = capsys.readouterr()
+        assert "Memory provider: xmemo" in captured.out
+
+    def test_post_setup_preserves_existing_secret(self, monkeypatch, tmp_path):
+        from hermes_cli.config import load_config, save_config as save_global_config
+
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.setenv("XMEMO_KEY", "existing-secret")
+        save_global_config({"memory": {}})
+
+        monkeypatch.setattr(
+            "plugins.memory.xmemo.cli._curses_select", lambda title, choices, default=0: default
+        )
+        # User presses Enter for everything (keep existing secret)
+        monkeypatch.setattr("sys.stdin.readline", lambda: "\n")
+
+        provider = XMemoMemoryProvider()
+        config = load_config()
+        provider.post_setup(str(tmp_path), config)
+
+        env_file = tmp_path / ".env"
+        if env_file.exists():
+            # Wizard should not write an empty value when user keeps existing secret
+            assert "existing-secret" in env_file.read_text() or "XMEMO_KEY=" not in env_file.read_text()
 
 
 class TestProfileIsolation:

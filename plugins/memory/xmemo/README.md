@@ -12,7 +12,7 @@ snapshots across sessions and tools.
 ## Setup
 
 ```bash
-hermes memory setup    # select "xmemo"
+hermes memory setup xmemo
 ```
 
 Or manually:
@@ -43,3 +43,11 @@ Config file: `$HERMES_HOME/xmemo.json`
 |------|-------------|
 | `xmemo_search` | Semantic search over XMemo memories |
 | `xmemo_remember` | Save a durable fact |
+| `xmemo_update_state` | Save active task / next action / blocker with TTL |
+| `xmemo_recall_context` | Build a bounded, ranked context pack |
+| `xmemo_record_event` | Append a timeline event or milestone |
+| `xmemo_create_reminder` | Create a TODO / action item |
+| `xmemo_list_reminders` | List open or completed reminders |
+| `xmemo_complete_reminder` | Mark a reminder as completed |
+| `xmemo_mark_used` | Record that a recalled memory was used |
+| `xmemo_forget` | Delete a memory by id or "current" |
