@@ -42,7 +42,18 @@ _lock = threading.Lock()
 
 # Tool-call result shapes we can parse
 _WRITE_FILE_PATH_KEY = "path"
-_TERMINAL_PATH_REGEX = re.compile(r"(?:^|\s)(/[^\s'\"`]+|\~/[^\s'\"`]+)")
+_TERMINAL_PATH_REGEX = re.compile(
+    r"(?:^|\s)(/[^\s'\"`]+|\~/[^\s'\"`]+|[A-Za-z]:[/\\][^\s'\"`]+)"
+)
+
+
+def _looks_like_abs_path(tok: str) -> bool:
+    """True for Unix absolute / ~/... paths and Windows absolute paths."""
+    if tok.startswith(("/", "~")):
+        return True
+    if len(tok) >= 3 and tok[1] == ":" and tok[2] in ("/", "\\") and tok[0].isalpha():
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +121,7 @@ def _extract_paths_from_terminal(args: Dict[str, Any], result: str) -> Set[str]:
         # Tokenise the command — catches `touch /tmp/hermes-x/test_foo.py`
         try:
             for tok in shlex.split(cmd, posix=True):
-                if tok.startswith(("/", "~")):
+                if _looks_like_abs_path(tok):
                     paths.add(tok)
         except ValueError:
             pass
